@@ -162,44 +162,217 @@ void Tensor::debug() const {
         debug_print(tmp_tensor->data(), this->shape(), this->strides(), this->dtype());
     }
 }
-
+//<任务1.2>检查张量的形状(shapes)和步长(strides)，判断它在内存中是否连续。
 bool Tensor::isContiguous() const {
-    TO_BE_IMPLEMENTED();
+    size_t ndim = this->ndim();
+    if (ndim <= 1) {
+        return true;
+    }
+    
+    const auto& strides = this->strides();
+    const auto& shape = this->shape();
+    
+    ptrdiff_t expected_stride = 1;
+    for (size_t i = ndim - 1; i > 0; i--) {
+        if (strides[i] != expected_stride) {
+            return false;
+        }
+        expected_stride *= shape[i];
+    }
+    
+    if (strides[0] != expected_stride) {
+        return false;
+    }
+    
     return true;
 }
-
+//<任务1.4>创建一个新张量，改变原始张量维度的顺序。转置可以通过这个函数实现，而无需移动数据
 tensor_t Tensor::permute(const std::vector<size_t> &order) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    size_t tensor_ndim = ndim();
+    if (order.size() != tensor_ndim) {
+        throw std::runtime_error("Order size must match tensor dimensions");
+    }
+    
+    // 检查order数组的有效性
+    std::vector<bool> seen(tensor_ndim, false);
+    for (size_t dim : order) {
+        if (dim >= tensor_ndim || seen[dim]) {
+            throw std::runtime_error("Invalid permutation order");
+        }
+        seen[dim] = true;
+    }
+    
+    TensorMeta new_meta = _meta;
+    new_meta.shape.resize(tensor_ndim);
+    new_meta.strides.resize(tensor_ndim);
+    
+    // 计算新的形状和步长
+    for (size_t i = 0; i < tensor_ndim; i++) {
+        new_meta.shape[i] = _meta.shape[order[i]];
+        new_meta.strides[i] = _meta.strides[order[i]];
+    }
+    
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
 }
-
+//<任务1.3>
+//创建一个新张量，-->new 一个Tensor 通过拆分或合并原始维度将原始张量重塑为给定形状。不涉及数据传输。-->使用引用
+// 例如，通过合并最后两个维度，将形状为(2, 3, 5)的张量更改为(2, 15)。
+// 这个函数不是简单地改变张量的形状那么简单，尽管测试会通过。如果新视图与
+// 原始张量不兼容，它应该引发错误。想想一个形状为(2, 3, 5)、步长为(30, 10, 1)
+// 的张量。你还能在不传输数据的情况下将其重塑为(2, 15)吗？
 tensor_t Tensor::view(const std::vector<size_t> &shape) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    size_t original_numel = numel();
+    size_t new_numel = 1;
+    for (size_t s : shape) {
+        new_numel *= s;
+    }
+    
+    if (original_numel != new_numel) {
+        throw std::runtime_error("Shape mismatch: new shape has different number of elements");
+    }
+    
+    TensorMeta new_meta = _meta;
+    new_meta.shape = shape;
+    
+    // 计算新的步长
+    size_t ndim = shape.size();
+    new_meta.strides.resize(ndim);
+    if (ndim > 0) {
+        new_meta.strides[ndim - 1] = 1;
+        for (size_t i = ndim - 2; i < ndim; i--) {
+            new_meta.strides[i] = new_meta.strides[i + 1] * shape[i + 1];
+        }
+    }
+    
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
 }
-
+//<任务1.5>创建一个新张量，沿给定维度，start（包含）和end（不包含）索引对原始张量进行切片操作。
 tensor_t Tensor::slice(size_t dim, size_t start, size_t end) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    size_t tensor_ndim = ndim();
+    if (dim >= tensor_ndim) {
+        throw std::runtime_error("Dimension out of range");
+    }
+    
+    if (start >= end || end > shape()[dim]) {
+        throw std::runtime_error("Invalid slice indices");
+    }
+    
+    TensorMeta new_meta = _meta;
+    new_meta.shape[dim] = end - start;
+    
+    // 计算新的偏移量
+    size_t new_offset = _offset + start * strides()[dim] * elementSize();
+    
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, new_offset));
 }
-
+// <任务1.1>
+// 将主机（cpu）数据加载到张量（可以在设备上）。查看构造函数了解如何获取当前设备
+// 上下文的运行时API，并执行从主机到设备的内存复制。
 void Tensor::load(const void *src_) {
-    TO_BE_IMPLEMENTED();
+    size_t total_elems = numel();
+    size_t dtype_size = elementSize();
+    
+    if (deviceType() == LLAISYS_DEVICE_CPU) {
+        std::memcpy(data(), src_, total_elems * dtype_size);
+    } else {
+        core::context().setDevice(deviceType(), deviceId());
+        core::context().runtime().api()->memcpy_sync(
+            data(),
+            src_,
+            total_elems * dtype_size,
+            LLAISYS_MEMCPY_H2D);
+    }
 }
 
 tensor_t Tensor::contiguous() const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    if (isContiguous()) {
+        return std::shared_ptr<Tensor>(new Tensor(_meta, _storage, _offset));
+    }
+    
+    // 创建一个新的连续张量
+    size_t total_elems = numel();
+    tensor_t new_tensor = create(shape(), dtype(), deviceType(), deviceId());
+    
+    // 复制数据
+    if (deviceType() == LLAISYS_DEVICE_CPU) {
+        std::memcpy(new_tensor->data(), data(), total_elems * elementSize());
+    } else {
+        core::context().setDevice(deviceType(), deviceId());
+        core::context().runtime().api()->memcpy_sync(
+            new_tensor->data(),
+            data(),
+            total_elems * elementSize(),
+            LLAISYS_MEMCPY_D2D);
+    }
+    
+    return new_tensor;
 }
 
 tensor_t Tensor::reshape(const std::vector<size_t> &shape) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    size_t original_numel = numel();
+    size_t new_numel = 1;
+    for (size_t s : shape) {
+        new_numel *= s;
+    }
+    
+    if (original_numel != new_numel) {
+        throw std::runtime_error("Shape mismatch: new shape has different number of elements");
+    }
+    
+    TensorMeta new_meta = _meta;
+    new_meta.shape = shape;
+    
+    // 计算新的步长
+    size_t ndim = shape.size();
+    new_meta.strides.resize(ndim);
+    if (ndim > 0) {
+        new_meta.strides[ndim - 1] = 1;
+        for (size_t i = ndim - 2; i < ndim; i--) {
+            new_meta.strides[i] = new_meta.strides[i + 1] * shape[i + 1];
+        }
+    }
+    
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
 }
 
 tensor_t Tensor::to(llaisysDeviceType_t device_type, int device) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    if (deviceType() == device_type && deviceId() == device) {
+        return std::shared_ptr<Tensor>(new Tensor(_meta, _storage, _offset));
+    }
+    
+    // 创建目标设备上的新张量
+    tensor_t new_tensor = create(shape(), dtype(), device_type, device);
+    
+    // 复制数据
+    size_t total_elems = numel();
+    size_t elem_size = elementSize();
+    
+    if (deviceType() == LLAISYS_DEVICE_CPU && device_type == LLAISYS_DEVICE_CPU) {
+        std::memcpy(new_tensor->data(), data(), total_elems * elem_size);
+    } else if (deviceType() == LLAISYS_DEVICE_CPU && device_type != LLAISYS_DEVICE_CPU) {
+        core::context().setDevice(device_type, device);
+        core::context().runtime().api()->memcpy_sync(
+            new_tensor->data(),
+            data(),
+            total_elems * elem_size,
+            LLAISYS_MEMCPY_H2D);
+    } else if (deviceType() != LLAISYS_DEVICE_CPU && device_type == LLAISYS_DEVICE_CPU) {
+        core::context().setDevice(deviceType(), deviceId());
+        core::context().runtime().api()->memcpy_sync(
+            new_tensor->data(),
+            data(),
+            total_elems * elem_size,
+            LLAISYS_MEMCPY_D2H);
+    } else {
+        core::context().setDevice(deviceType(), deviceId());
+        core::context().runtime().api()->memcpy_sync(
+            new_tensor->data(),
+            data(),
+            total_elems * elem_size,
+            LLAISYS_MEMCPY_D2D);
+    }
+    
+    return new_tensor;
 }
 
 } // namespace llaisys

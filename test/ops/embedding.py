@@ -1,10 +1,14 @@
 import sys
 import os
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, parent_dir)
+# Add the project root directory to Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, project_root)
+# Add the python directory to Python path to find llaisys module
+python_dir = os.path.join(project_root, "python")
+sys.path.insert(0, python_dir)
 import llaisys
-from test_utils import random_int_tensor, random_tensor, check_equal, benchmark
+from test.test_utils import random_int_tensor, random_tensor, check_equal, benchmark
 
 
 def torch_embedding(out, idx, embd):

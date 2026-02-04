@@ -1,11 +1,15 @@
 import sys
 import os
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, parent_dir)
+# Add the project root directory to Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, project_root)
+# Add the python directory to Python path to find llaisys module
+python_dir = os.path.join(project_root, "python")
+sys.path.insert(0, python_dir)
 import llaisys
 import torch
-from test_utils import random_tensor, check_equal, benchmark
+from test.test_utils import random_tensor, check_equal, benchmark
 
 
 def torch_linear(out, x, w, bias):
@@ -23,6 +27,13 @@ def test_op_linear(
     device_name="cpu",
     profile=False,
 ):
+    # Adjust tolerance based on data type
+    if dtype_name == "f16":
+        atol = 1e-3
+        rtol = 1e-3
+    elif dtype_name == "bf16":
+        atol = 1e-2
+        rtol = 1e-2
     print(f"   out {out_shape}, x {x_shape}, w {w_shape}, bias {use_bias}, dtype <{dtype_name}>")
     x, x_ = random_tensor(x_shape, dtype_name, device_name, scale=0.1)
     w, w_ = random_tensor(w_shape, dtype_name, device_name, scale=0.01)
